@@ -270,7 +270,7 @@ class ToolsChainModel(BaseModel):
 class ConversationConfig(BaseModel):
     optimize_latency: Optional[bool] = True  # This will work on in conversation
     hangup_after_silence: Optional[int] = 20
-    incremental_delay: Optional[int] = 900  # use this to incrementally delay to handle long pauses
+    incremental_delay: Optional[int] = 200  # use this to incrementally delay to handle long pauses
     number_of_words_for_interruption: Optional[
         int] = 1  # Maybe send half second of empty noise if needed for a while as soon as we get speaking true in nitro, use that to delay
     interruption_backoff_period: Optional[int] = 100

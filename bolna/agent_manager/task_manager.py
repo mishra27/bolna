@@ -1782,7 +1782,8 @@ class TaskManager(BaseManager):
     async def __check_for_completion(self):
         logger.info(f"Starting task to check for completion")
         while True:
-            await asyncio.sleep(2)
+            #TODO: check 
+            await asyncio.sleep(.2)
             if self.last_transmitted_timestamp == 0:
                 logger.info(f"Last transmitted timestamp is simply 0 and hence continuing")
                 continue

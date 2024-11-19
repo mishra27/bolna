@@ -189,8 +189,8 @@ class CartesiaSynthesizer(BaseSynthesizer):
                         self.meta_info['format'] = "wav"
                         audio = resample(convert_audio_to_wav(message, source_format="mp3"), int(self.sampling_rate),
                                          format="wav")
-
                     yield create_ws_data_packet(audio, self.meta_info)
+
                     if not self.first_chunk_generated:
                         self.meta_info["is_first_chunk"] = True
                         self.first_chunk_generated = True
@@ -199,12 +199,12 @@ class CartesiaSynthesizer(BaseSynthesizer):
                         # Reset the last_text_sent and first_chunk converted to reset synth latency
                         self.first_chunk_generated = False
                         self.last_text_sent = True
-
                     if message == b'\x00':
                         logger.info("received null byte and hence end of stream")
                         self.meta_info["end_of_synthesizer_stream"] = True
-                        #yield create_ws_data_packet(resample(message, int(self.sampling_rate)), self.meta_info)
+                        yield create_ws_data_packet(resample(message, int(self.sampling_rate)), self.meta_info)
                         self.first_chunk_generated = False
+
 
             else:
                 while True:
