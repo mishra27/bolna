@@ -42,6 +42,8 @@ class CartesiaSynthesizer(BaseSynthesizer):
         self.previous_request_ids = []
         self.websocket_holder = {"websocket": None}
         self.context_id = None
+        self.interrupt_akshay = False
+
 
         self.ws_url = f"wss://api.cartesia.ai/tts/websocket?api_key={self.api_key}&cartesia_version=2024-06-10"
         self.api_url = "https://api.cartesia.ai/tts/bytes"
@@ -83,29 +85,6 @@ class CartesiaSynthesizer(BaseSynthesizer):
         if end_of_llm_stream:
             self.last_text_sent = True
 
-        # Send the end-of-stream signal with an empty string as text
-        try:
-            input_message = {
-                "context_id": self.context_id,
-                "model_id": self.model,
-                "transcript": "",
-                "voice": {
-                    "mode": "id",
-                    "id": self.voice_id
-                },
-                "continue": False,
-                "output_format": {
-                    "container": "raw",
-                    "encoding": "pcm_mulaw",
-                    "sample_rate": 8000
-                }
-            }
-
-            await self.websocket_holder["websocket"].send(json.dumps(input_message))
-            logger.info("Sent end-of-stream signal.")
-        except Exception as e:
-            logger.error(f"Error sending end-of-stream signal: {e}")
-
     async def receiver(self):
         while True:
             try:
@@ -113,6 +92,8 @@ class CartesiaSynthesizer(BaseSynthesizer):
                     logger.info("WebSocket is not connected, skipping receive.")
                     await asyncio.sleep(5)
                     continue
+                if self.interrupt_akshay:
+                    yield b'\x00'
 
                 response = await self.websocket_holder["websocket"].recv()
                 data = json.loads(response)
@@ -205,48 +186,6 @@ class CartesiaSynthesizer(BaseSynthesizer):
                         self.meta_info["end_of_synthesizer_stream"] = True
                         #yield create_ws_data_packet(resample(message, int(self.sampling_rate)), self.meta_info)
                         self.first_chunk_generated = False
-
-            else:
-                while True:
-                    message = await self.internal_queue.get()
-                    logger.info(f"Generating TTS response for message: {message}, using mulaw {self.use_mulaw}")
-                    meta_info, text = message.get("meta_info"), message.get("data")
-                    audio = None
-                    if self.caching:
-                        if self.cache.get(text):
-                            logger.info(f"Cache hit and hence returning quickly {text}")
-                            audio = self.cache.get(text)
-                            meta_info['is_cached'] = True
-                        else:
-                            c = len(text)
-                            self.synthesized_characters += c
-                            logger.info(
-                                f"Not a cache hit {list(self.cache.data_dict)} and hence increasing characters by {c}")
-                            meta_info['is_cached'] = False
-                            audio = await self.__generate_http(text)
-                            self.cache.set(text, audio)
-                    else:
-                        meta_info['is_cached'] = False
-                        audio = await self.__generate_http(text)
-
-                    meta_info['text'] = text
-                    if not self.first_chunk_generated:
-                        meta_info["is_first_chunk"] = True
-                        self.first_chunk_generated = True
-
-                    if "end_of_llm_stream" in meta_info and meta_info["end_of_llm_stream"]:
-                        meta_info["end_of_synthesizer_stream"] = True
-                        self.first_chunk_generated = False
-
-                    if self.use_mulaw:
-                        meta_info['format'] = "mulaw"
-                    else:
-                        meta_info['format'] = "wav"
-                        wav_bytes = convert_audio_to_wav(audio, source_format="mp3")
-                        logger.info(f"self.sampling_rate {self.sampling_rate}")
-                        audio = resample(wav_bytes, int(self.sampling_rate), format="wav")
-                    yield create_ws_data_packet(audio, meta_info)
-
         except Exception as e:
             traceback.print_exc()
             logger.error(f"Error in cartesia generate {e}")
@@ -270,7 +209,11 @@ class CartesiaSynthesizer(BaseSynthesizer):
 
     async def push(self, message):
         logger.info(f"Pushed message to internal queue {message}")
-        if self.stream:
+        if self.interrupt_akshay:
+            logger.info("interrupt_akshay is true stop talking")
+
+
+        if self.stream and not self.interrupt_akshay:
             meta_info, text = message.get("meta_info"), message.get("data")
             self.synthesized_characters += len(text) if text is not None else 0
             end_of_llm_stream = "end_of_llm_stream" in meta_info and meta_info["end_of_llm_stream"]
@@ -279,5 +222,15 @@ class CartesiaSynthesizer(BaseSynthesizer):
             self.context_id = meta_info["request_id"]
             self.sender_task = asyncio.create_task(self.sender(text, end_of_llm_stream))
             self.text_queue.append(meta_info)
-        else:
-            self.internal_queue.put_nowait(message)
+
+    async def clear_queue(self):
+        logger.info("setting interrupt_akshay to true")
+        self.interrupt_akshay = True
+        self.sender_task.cancel()
+        self.text_queue.clear()
+
+
+    async def enable_receiver(self):
+        logger.info("setting interrupt_akshay to false")
+        self.interrupt_akshay = False
+        self.text_queue.clear()

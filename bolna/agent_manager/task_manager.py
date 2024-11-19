@@ -47,6 +47,7 @@ class TaskManager(BaseManager):
         self.average_synthesizer_latency = 0.0
         self.average_transcriber_latency = 0.0
         self.task_config = task
+        self.reject_id = -1000
 
         self.timezone = pytz.timezone('America/Los_Angeles')
         self.language = DEFAULT_LANGUAGE_CODE
@@ -81,6 +82,7 @@ class TaskManager(BaseManager):
         self.llm_queue = asyncio.Queue()
         self.synthesizer_queue = asyncio.Queue()
         self.transcriber_output_queue = asyncio.Queue()
+        self.akshay_stop = False
         self.queues = {
             "transcriber": self.audio_queue,
             "llm": self.llm_queue,
@@ -223,6 +225,7 @@ class TaskManager(BaseManager):
 
         # Sequence id for interruption
         self.curr_sequence_id = 0
+        self.last_sequence_id = -1000
         self.sequence_ids = {-1} #-1 is used for data that needs to be passed and is developed by task manager like backchannleing etc.
 
         #setup request logs
@@ -237,7 +240,7 @@ class TaskManager(BaseManager):
 
             self.background_check_task = None
             self.hangup_task = None
-            self.output_chunk_size = 16384 if self.sampling_rate == 24000 else 4096 #0.5 second chunk size for calls
+            self.output_chunk_size = 16384 if self.sampling_rate == 24000 else 2048 #0.5 second chunk size for calls
             # For nitro
             self.nitro = True 
             self.conversation_config = task.get("task_config", {})
@@ -764,6 +767,7 @@ class TaskManager(BaseManager):
         # self.synthesizer_task = asyncio.create_task(self.__listen_synthesizer())
         for task in self.synthesizer_tasks:
             task.cancel()
+        # await self.tools["synthesizer"].enable_receiver()
         
         self.synthesizer_tasks = []
 
@@ -783,10 +787,12 @@ class TaskManager(BaseManager):
             meta_info = self.tools["transcriber"].get_meta_info()
             logger.info(f"Metainfo {meta_info}")
         meta_info_copy = meta_info.copy()
+        # self.last_sequence_id = self.curr_sequence_id
         self.curr_sequence_id +=1
         meta_info_copy["sequence_id"] = self.curr_sequence_id
         meta_info_copy['turn_id'] = self.turn_id
-        self.sequence_ids.add(meta_info_copy["sequence_id"])
+        if not meta_info_copy["sequence_id"] == self.reject_id:
+            self.sequence_ids.add(meta_info_copy["sequence_id"])
         return meta_info_copy
     
     def _extract_sequence_and_meta(self, message):
@@ -907,6 +913,8 @@ class TaskManager(BaseManager):
             meta_info['message_category'] = 'filler'
 
         if next_step == "synthesizer" and not should_bypass_synth:
+            # await self.tools["synthesizer"].enable_receiver()
+            logger.info("xxxxxxxx  {meta_info}")
             task = asyncio.create_task(self._synthesize(create_ws_data_packet(text_chunk, meta_info)))
             self.synthesizer_tasks.append(asyncio.ensure_future(task))
         elif self.tools["output"] is not None:
@@ -939,25 +947,6 @@ class TaskManager(BaseManager):
             if self.callee_silent:
                 logger.info("When we got utterance end, maybe LLM was still generating response. So, copying into history")
                 self.history = copy.deepcopy(self.interim_history)
-
-    async def _process_conversation_formulaic_task(self, message, sequence, meta_info):
-        llm_response = ""
-        logger.info("Agent flow is formulaic and hence moving smoothly")
-        async for text_chunk in self.tools['llm_agent'].generate(self.history):
-            if is_valid_md5(text_chunk):
-                self.synthesizer_tasks.append(asyncio.create_task(
-                    self._synthesize(create_ws_data_packet(text_chunk, meta_info, is_md5_hash=True))))
-            else:
-                # TODO Make it more modular
-                llm_response += " " +text_chunk
-                next_step = self._get_next_step(sequence, "llm")
-                if next_step == "synthesizer":
-                    self.synthesizer_tasks.append(asyncio.create_task(self._synthesize(create_ws_data_packet(text_chunk, meta_info))))
-                else:
-                    logger.info(f"Sending output text {sequence}")
-                    await self.tools["output"].handle(create_ws_data_packet(text_chunk, meta_info))
-                    self.synthesizer_tasks.append(asyncio.create_task(
-                        self._synthesize(create_ws_data_packet(text_chunk, meta_info, is_md5_hash=False))))
 
     async def __filler_classification_task(self, message):
         logger.info(f"doing the classification task")
@@ -1245,6 +1234,7 @@ class TaskManager(BaseManager):
     async def _run_llm_task(self, message):
         sequence, meta_info = self._extract_sequence_and_meta(message)
         logger.info(f"After adding {self.curr_sequence_id} into sequence id {self.sequence_ids} for message {message}")
+        # await self.tools["synthesizer"].enable_receiver()
 
         try:
             if self._is_extraction_task() or self._is_summarization_task():
@@ -1391,7 +1381,13 @@ class TaskManager(BaseManager):
                                     #Process interruption only if number of words is higher than the threshold 
                                     logger.info(f"###### Number of words {num_words} is higher than the required number of words for interruption, hence, definitely interrupting. Interruption and hence changing the turn id")
                                     self.turn_id += 1
+                                    self.last_sequence_id = self.curr_sequence_id
+                                    self.sequence_ids = {-1}
+                                    self.reject_id = list(self.sequence_ids)[-1]
+                                    logger.info(f"self.last_sequence_id:: {self.last_sequence_id}  message['meta_info'] {message['meta_info']} self.curr_sequence_id::: {self.curr_sequence_id}")
+                                    await self.tools["synthesizer"].clear_queue()
                                     await self.__cleanup_downstream_tasks()
+                                    self.akshay_stop = True
                                 else:
                                     logger.info(f"Not starting a cleanup because {num_words} number of words are lesser {self.number_of_words_for_interruption} and hence continuing,")
                                     continue
@@ -1505,14 +1501,6 @@ class TaskManager(BaseManager):
                                 else:
                                     #await self.tools["output"].handle(message)
                                     self.buffered_output_queue.put_nowait(message)
-                            else:
-                                logger.info("Stream is not enabled and hence sending entire audio")
-                                self.latency_dict[meta_info["request_id"]]["synthesizer"] = {
-                                    "synthesizer_first_chunk_latency": meta_info.get("synthesizer_latency", 0),
-                                    "average_latency": self.average_synthesizer_latency
-                                }
-                                overall_time = time.time() - meta_info["start_time"]
-                                await self.tools["output"].handle(message)
                         else:
                             logger.info(f"{message['meta_info']['sequence_id']} is not in sequence ids  {self.sequence_ids} and hence not sending to output")
 
@@ -1632,7 +1620,10 @@ class TaskManager(BaseManager):
                         await self.__send_preprocessed_audio(meta_info, get_md5_hash(text))
                     else:
                         self.synthesizer_characters += len(text)
-                        await self.tools["synthesizer"].push(message)
+                        logger.info(f"$$$$ message['meta_info']['sequence_id'] {message['meta_info']['sequence_id']}  self.sequence_ids { self.sequence_ids}")
+                        if message['meta_info']['sequence_id'] in self.sequence_ids:
+                            await self.tools["synthesizer"].enable_receiver()
+                            await self.tools["synthesizer"].push(message)
                 else:
                     logger.info("other synthesizer models not supported yet")
             else:
@@ -1763,6 +1754,7 @@ class TaskManager(BaseManager):
 
                 if "is_first_chunk_of_entire_response" in message['meta_info'] and message['meta_info']['is_first_chunk_of_entire_response']:
                     logger.info(f"First chunk stuff")
+                    await self.tools["synthesizer"].enable_receiver()
                     self.started_transmitting_audio = True if "is_final_chunk_of_entire_response" not in message['meta_info'] else False
                     self.consider_next_transcript_after = time.time() + self.duration_to_prevent_accidental_interruption
                     self.__process_latency_data(message) 
@@ -1782,7 +1774,15 @@ class TaskManager(BaseManager):
     async def __check_for_completion(self):
         logger.info(f"Starting task to check for completion")
         while True:
-            await asyncio.sleep(2)
+            #TODO: check 
+            await asyncio.sleep(1)
+            if self.akshay_stop:
+                logger.info("FORCE STOP!!")
+                await self.tools["output"].handle_interruption()
+                self.akshay_stop = False
+                self.sequence_ids = {-1}
+
+
             if self.last_transmitted_timestamp == 0:
                 logger.info(f"Last transmitted timestamp is simply 0 and hence continuing")
                 continue
