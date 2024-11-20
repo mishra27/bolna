@@ -179,20 +179,20 @@ class CartesiaSynthesizer(BaseSynthesizer):
                     logger.info(f"Received message from server")
 
                     if len(self.text_queue) > 0:
-                        self.meta_info = self.text_queue.popleft()
+                        meta_info = self.text_queue.popleft()
                     audio = ""
 
                     if self.use_mulaw:
-                        self.meta_info['format'] = 'mulaw'
+                        meta_info['format'] = 'mulaw'
                         audio = message
                     else:
-                        self.meta_info['format'] = "wav"
+                        meta_info['format'] = "wav"
                         audio = resample(convert_audio_to_wav(message, source_format="mp3"), int(self.sampling_rate),
                                          format="wav")
 
-                    yield create_ws_data_packet(audio, self.meta_info)
+                    yield create_ws_data_packet(audio, meta_info)
                     if not self.first_chunk_generated:
-                        self.meta_info["is_first_chunk"] = True
+                        meta_info["is_first_chunk"] = True
                         self.first_chunk_generated = True
 
                     if self.last_text_sent:
@@ -202,7 +202,7 @@ class CartesiaSynthesizer(BaseSynthesizer):
 
                     if message == b'\x00':
                         logger.info("received null byte and hence end of stream")
-                        self.meta_info["end_of_synthesizer_stream"] = True
+                        meta_info["end_of_synthesizer_stream"] = True
                         #yield create_ws_data_packet(resample(message, int(self.sampling_rate)), self.meta_info)
                         self.first_chunk_generated = False
 
