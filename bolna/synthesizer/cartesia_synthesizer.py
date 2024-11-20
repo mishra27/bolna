@@ -189,6 +189,8 @@ class CartesiaSynthesizer(BaseSynthesizer):
                         self.meta_info['format'] = "wav"
                         audio = resample(convert_audio_to_wav(message, source_format="mp3"), int(self.sampling_rate),
                                          format="wav")
+
+                    yield create_ws_data_packet(audio, self.meta_info)
                     if not self.first_chunk_generated:
                         self.meta_info["is_first_chunk"] = True
                         self.first_chunk_generated = True
@@ -197,16 +199,12 @@ class CartesiaSynthesizer(BaseSynthesizer):
                         # Reset the last_text_sent and first_chunk converted to reset synth latency
                         self.first_chunk_generated = False
                         self.last_text_sent = True
+
                     if message == b'\x00':
                         logger.info("received null byte and hence end of stream")
                         self.meta_info["end_of_synthesizer_stream"] = True
-                        # yield create_ws_data_packet(resample(message, int(self.sampling_rate)), self.meta_info)
+                        #yield create_ws_data_packet(resample(message, int(self.sampling_rate)), self.meta_info)
                         self.first_chunk_generated = False
-                    tt = self.meta_info["text"]
-                    print(f"$$$ {tt}")
-                    yield create_ws_data_packet(audio, self.meta_info)
-
-
 
             else:
                 while True:
@@ -273,7 +271,6 @@ class CartesiaSynthesizer(BaseSynthesizer):
     async def push(self, message):
         logger.info(f"Pushed message to internal queue {message}")
         if self.stream:
-            print(f"#$# {message}")
             meta_info, text = message.get("meta_info"), message.get("data")
             self.synthesized_characters += len(text) if text is not None else 0
             end_of_llm_stream = "end_of_llm_stream" in meta_info and meta_info["end_of_llm_stream"]
