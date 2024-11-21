@@ -83,19 +83,17 @@ class CartesiaSynthesizer(BaseSynthesizer):
             self.websocket = await self.client.tts.websocket()
             self.context = self.websocket.context()
             logger.info("Established Cartesia WebSocket connection")
-            return self.websocket
+            return True
         except Exception as e:
             logger.error(f"Failed to establish connection: {e}")
             return None
 
     async def monitor_connection(self):
-        pass
-        # Periodically check if the connection is still alive
-        # while True:
-        #     if self.websocket_holder["websocket"] is None or self.websocket_holder["websocket"].closed:
-        #         logger.info("Re-establishing connection...")
-        #         self.websocket_holder["websocket"] = await self.establish_connection()
-        #     await asyncio.sleep(50)
+        while True:
+            if self.websocket is None:
+                logger.info("Re-establishing connection...")
+                await self.establish_connection()
+            await asyncio.sleep(50)
 
     async def sender(self, text, end_of_llm_stream=False):
         """
