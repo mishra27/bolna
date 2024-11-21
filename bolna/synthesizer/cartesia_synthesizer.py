@@ -79,14 +79,17 @@ class CartesiaSynthesizer(BaseSynthesizer):
 
     async def establish_connection(self):
         """Establish WebSocket connection with Cartesia"""
-        try:
-            self.websocket = await self.client.tts.websocket()
-            self.context = self.websocket.context()
-            logger.info("Established Cartesia WebSocket connection")
-            return True
-        except Exception as e:
-            logger.error(f"Failed to establish connection: {e}")
-            return None
+        while self.context is None:
+            logger.info("Waiting for WebSocket context to be established...")
+            await asyncio.sleep(1)
+            try:
+                self.websocket = await self.client.tts.websocket()
+                self.context = self.websocket.context()
+                logger.info("Established Cartesia WebSocket connection")
+                return True
+            except Exception as e:
+                logger.error(f"Failed to establish connection: {e}")
+                return None
 
     async def monitor_connection(self):
         while True:
@@ -144,7 +147,7 @@ class CartesiaSynthesizer(BaseSynthesizer):
 
     async def generate(self):
         """
-        Generate audio from text, supporting both streaming and non-streaming modes
+        Generate audio from text, supporting streaming
         
         Yields:
             Audio packets with metadata
