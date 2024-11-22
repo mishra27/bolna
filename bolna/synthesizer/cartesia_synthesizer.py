@@ -42,6 +42,7 @@ class CartesiaSynthesizer(BaseSynthesizer):
         self.previous_request_ids = []
         self.websocket_holder = {"websocket": None}
         self.context_id = None
+        self.stop_synth = False
 
         self.ws_url = f"wss://api.cartesia.ai/tts/websocket?api_key={self.api_key}&cartesia_version=2024-06-10"
         self.api_url = "https://api.cartesia.ai/tts/bytes"
@@ -83,28 +84,6 @@ class CartesiaSynthesizer(BaseSynthesizer):
         if end_of_llm_stream:
             self.last_text_sent = True
 
-        # Send the end-of-stream signal with an empty string as text
-        try:
-            input_message = {
-                "context_id": self.context_id,
-                "model_id": self.model,
-                "transcript": "",
-                "voice": {
-                    "mode": "id",
-                    "id": self.voice_id
-                },
-                "continue": False,
-                "output_format": {
-                    "container": "raw",
-                    "encoding": "pcm_mulaw",
-                    "sample_rate": 8000
-                }
-            }
-
-            await self.websocket_holder["websocket"].send(json.dumps(input_message))
-            logger.info("Sent end-of-stream signal.")
-        except Exception as e:
-            logger.error(f"Error sending end-of-stream signal: {e}")
 
     async def receiver(self):
         while True:
@@ -269,8 +248,8 @@ class CartesiaSynthesizer(BaseSynthesizer):
             await asyncio.sleep(50)
 
     async def push(self, message):
-        logger.info(f"Pushed message to internal queue {message}")
-        if self.stream:
+        if self.stream and not self.stop_synth:
+            logger.info(f" ****** Pushed message to internal queue {message}")
             meta_info, text = message.get("meta_info"), message.get("data")
             self.synthesized_characters += len(text) if text is not None else 0
             end_of_llm_stream = "end_of_llm_stream" in meta_info and meta_info["end_of_llm_stream"]
@@ -280,4 +259,30 @@ class CartesiaSynthesizer(BaseSynthesizer):
             self.sender_task = asyncio.create_task(self.sender(text, end_of_llm_stream))
             self.text_queue.append(meta_info)
         else:
-            self.internal_queue.put_nowait(message)
+            logger.info(f" ****** did not push message to internal queue {message}")
+            # self.stop_synth = False
+
+
+    async def stop(self):
+        """
+        Stop all ongoing tasks without closing WebSocket.
+        """
+        self.stop_synth = True
+        try:
+            # Cancel sender task if it exists
+            if hasattr(self, 'sender_task') and self.sender_task is not None:
+                self.sender_task.cancel()
+
+            # Reset internal state
+            self.first_chunk_generated = False
+            self.last_text_sent = False
+            self.text_queue.clear()
+            self.context_id = None
+            
+            logger.info("Cartesia Synthesizer tasks stopped.")
+        except Exception as e:
+            logger.error(f"Error stopping Cartesia Synthesizer: {e}")
+
+    async def reset(self):
+        logger.info("Cartesia Synthesizer enabled.")
+        self.stop_false = False

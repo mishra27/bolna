@@ -11,11 +11,11 @@ load_dotenv()
 
 
 class AzureSynthesizer(BaseSynthesizer):
-    def __init__(self, voice, language, model="neural", stream=False, sampling_rate=16000, buffer_size=400, caching=True, **kwargs):
+    def __init__(self, voice, language="en-US", model="neural", stream=False, sampling_rate=16000, buffer_size=400, caching=True, **kwargs):
         super().__init__(stream, buffer_size)
         self.model = model
         self.language = language
-        self.voice = f"{language}-{voice}{model}" #hard-code for testing to self.voice = "en-US-JennyNeural"
+        self.voice = voice #hard-code for testing to self.voice = "en-US-JennyNeural"
         logger.info(f"{self.voice} initialized")
         self.sample_rate = str(sampling_rate)
         self.first_chunk_generated = False

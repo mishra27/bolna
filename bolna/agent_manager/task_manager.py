@@ -39,6 +39,7 @@ class TaskManager(BaseManager):
         # Latency and logging 
         self.latency_dict = defaultdict(dict)
         self.kwargs = kwargs
+        self.stream_to_twilio = True
         #Setup Latency part
         self.llm_latencies = []
         self.synthesizer_latencies = []
@@ -743,6 +744,7 @@ class TaskManager(BaseManager):
         logger.info(f"Cleaning up downstream task")
         start_time = time.time()
         await self.tools["output"].handle_interruption()
+        await self.tools["output"].handle_interruption()
         self.sequence_ids = {-1} 
         
         #Stop the output loop first so that we do not transmit anything else
@@ -906,9 +908,13 @@ class TaskManager(BaseManager):
             meta_info['local'] = True
             meta_info['message_category'] = 'filler'
 
-        if next_step == "synthesizer" and not should_bypass_synth:
-            task = asyncio.create_task(self._synthesize(create_ws_data_packet(text_chunk, meta_info)))
-            self.synthesizer_tasks.append(asyncio.ensure_future(task))
+        if next_step == "synthesizer":
+            if not should_bypass_synth:
+                logger.info(f"00000:: packets for synth {text_chunk}")
+                task = asyncio.create_task(self._synthesize(create_ws_data_packet(text_chunk, meta_info)))
+                self.synthesizer_tasks.append(asyncio.ensure_future(task))
+            else:
+                logger.info(f"00000:: no packets for synth {text_chunk}")
         elif self.tools["output"] is not None:
             logger.info("Synthesizer not the next step and hence simply returning back")
             overall_time = time.time() - meta_info["llm_start_time"]
@@ -1135,12 +1141,7 @@ class TaskManager(BaseManager):
                     self.interim_history = copy.deepcopy(messages)
 
                 await self._handle_llm_output(next_step, text_chunk, should_bypass_synth, meta_info)
-            else:
-                messages.append({"role": "assistant", "content": llm_response})
-                self.history = copy.deepcopy(messages)
-                await self._handle_llm_output(next_step, llm_response, should_bypass_synth, meta_info)
-                convert_to_request_log(message=llm_response, meta_info=meta_info, component="llm", direction="response", model=self.llm_config["model"], run_id= self.run_id)
-        
+
         if self.stream and llm_response != PRE_FUNCTION_CALL_MESSAGE:
             logger.info(f"Storing {llm_response} into history should_trigger_function_call {should_trigger_function_call}")
             self.__store_into_history(meta_info, messages, llm_response, should_trigger_function_call= should_trigger_function_call)
@@ -1150,7 +1151,8 @@ class TaskManager(BaseManager):
         logger.info("agent flow is not preprocessed")
 
         start_time = time.time()
-        should_bypass_synth = 'bypass_synth' in meta_info and meta_info['bypass_synth'] == True
+        # should_bypass_synth = 'bypass_synth' in meta_info and meta_info['bypass_synth'] == True
+        should_bypass_synth = not self.stream_to_twilio
         next_step = self._get_next_step(sequence, "llm")
         meta_info['llm_start_time'] = time.time()
         route = None
@@ -1207,7 +1209,8 @@ class TaskManager(BaseManager):
             messages.append({'role': 'user', 'content': message['data']})
             ### TODO CHECK IF THIS IS EVEN REQUIRED
             convert_to_request_log(message=format_messages(messages, use_system_prompt=True), meta_info=meta_info, component="llm", direction="request", model=self.llm_config["model"], run_id= self.run_id)
-
+            self.stream_to_twilio = True
+            await self.tools["synthesizer"].reset()
             await self.__do_llm_generation(messages, meta_info, next_step, should_bypass_synth)
             # TODO : Write a better check for completion prompt
             if self.use_llm_to_determine_hangup and not self.turn_based_conversation:
@@ -1400,6 +1403,8 @@ class TaskManager(BaseManager):
                                     #Process interruption only if number of words is higher than the threshold 
                                     logger.info(f"###### Number of words {num_words} is higher than the required number of words for interruption, hence, definitely interrupting. Interruption and hence changing the turn id")
                                     self.turn_id += 1
+                                    await self.tools["synthesizer"].stop()
+                                    self.stream_to_twilio = False
                                     await self.__cleanup_downstream_tasks()
                                 else:
                                     logger.info(f"Not starting a cleanup because {num_words} number of words are lesser {self.number_of_words_for_interruption} and hence continuing,")
@@ -1436,28 +1441,10 @@ class TaskManager(BaseManager):
 
                         else:
                             logger.info(f"Got a null message")
-                else:
-                    logger.info(f"Processing http transcription for message {message}")
-                    await self.__process_http_transcription(message)
         
         except Exception as e:
             traceback.print_exc()
             logger.error(f"Error in transcriber {e}")
-
-    async def __process_http_transcription(self, message):
-        meta_info = self.__get_updated_meta_info(message["meta_info"])
-        include_latency = meta_info.get("include_latency", False)
-        if include_latency:
-            self.latency_dict[meta_info['request_id']]["transcriber"] = {"total_latency":  meta_info["transcriber_latency"], "audio_duration": meta_info["audio_duration"], "last_vocal_frame_timestamp": meta_info["last_vocal_frame_timestamp"] }
-
-        sequence = message["meta_info"]["sequence"]
-        next_task = self._get_next_step(sequence, "transcriber")
-        self.transcriber_duration += message["meta_info"]["transcriber_duration"] if "transcriber_duration" in message["meta_info"] else 0
-        #self.history.append({'role': 'user', 'content': message['data']})
-        if self._is_preprocessed_flow():
-            self.__update_preprocessed_tree_node()
-
-        await self._handle_transcriber_output(next_task, message['data'], meta_info)
 
 
     #################################################################
@@ -1513,15 +1500,6 @@ class TaskManager(BaseManager):
                                         self.__enqueue_chunk(chunk, chunk_idx, number_of_chunks, meta_info)
                                 else:
                                     self.buffered_output_queue.put_nowait(message)
-                            else:
-                                # Non-streaming output
-                                logger.info("Stream not enabled, sending entire audio")
-                                self.latency_dict[meta_info["request_id"]]["synthesizer"] = {
-                                    "synthesizer_first_chunk_latency": meta_info.get("synthesizer_first_chunk_latency",
-                                                                                     0),
-                                    "average_latency": self.average_synthesizer_latency,
-                                }
-                                await self.tools["output"].handle(message)
 
                             convert_to_request_log(
                                 message=meta_info.get("text", ""),
@@ -1754,7 +1732,8 @@ class TaskManager(BaseManager):
                 if "end_of_conversation" in message['meta_info']:
                     await self.__process_end_of_conversation()
                 
-                if 'sequence_id' in message['meta_info'] and message["meta_info"]["sequence_id"] in self.sequence_ids:
+                if 'sequence_id' in message['meta_info'] and message["meta_info"]["sequence_id"] in self.sequence_ids and self.stream_to_twilio:
+                    # ******
                     num_chunks += 1
                     await self.tools["output"].handle(message)                    
                     duration = calculate_audio_duration(len(message["data"]), self.sampling_rate, format = message['meta_info']['format'])

@@ -42,4 +42,11 @@ class StreamingContextualAgent(BaseAgent):
     async def generate(self, history, synthesize=False, meta_info = None):
         async for token in self.llm.generate_stream(history, synthesize=synthesize, meta_info = meta_info):
             logger.info('Agent: {}'.format(token))
+            # string_to_split = token[0]
+            # words = string_to_split.split()  # Split the string into words
+            # # Create new tuples with the same other values
+            # result = [(word, *token[1:]) for word in words]
+            # for item in result:
+            #     yield item
+    
             yield token

@@ -9,7 +9,7 @@ RUN apt-get update && apt-get -y upgrade && apt-get install -y --no-install-reco
     gcc \
     g++
 RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install git+https://github.com/bolna-ai/bolna@master
+    pip install git+https://github.com/mishra27/bolna@newest
 COPY quickstart_server.py /app/
 
 EXPOSE 5001
