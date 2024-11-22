@@ -1753,7 +1753,6 @@ class TaskManager(BaseManager):
 
                 if "is_first_chunk_of_entire_response" in message['meta_info'] and message['meta_info']['is_first_chunk_of_entire_response']:
                     logger.info(f"First chunk stuff")
-                    await self.tools["synthesizer"].enable_receiver()
                     self.started_transmitting_audio = True if "is_final_chunk_of_entire_response" not in message['meta_info'] else False
                     self.consider_next_transcript_after = time.time() + self.duration_to_prevent_accidental_interruption
                     self.__process_latency_data(message) 
