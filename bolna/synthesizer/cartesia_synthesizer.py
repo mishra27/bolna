@@ -155,7 +155,7 @@ class CartesiaSynthesizer(BaseSynthesizer):
     # Currently we are only supporting wav output but soon we will incorporate conver
     async def generate(self):
         try:
-            if self.stream:
+            if self.stream and not self.interrupt_akshay:
                 async for message in self.receiver():
                     logger.info(f"Received message from server")
 
