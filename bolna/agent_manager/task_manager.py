@@ -1622,7 +1622,6 @@ class TaskManager(BaseManager):
                         self.synthesizer_characters += len(text)
                         logger.info(f"$$$$ message['meta_info']['sequence_id'] {message['meta_info']['sequence_id']}  self.sequence_ids { self.sequence_ids}")
                         if message['meta_info']['sequence_id'] in self.sequence_ids:
-                            await self.tools["synthesizer"].enable_receiver()
                             await self.tools["synthesizer"].push(message)
                 else:
                     logger.info("other synthesizer models not supported yet")
@@ -1781,6 +1780,9 @@ class TaskManager(BaseManager):
                 await self.tools["output"].handle_interruption()
                 self.akshay_stop = False
                 self.sequence_ids = {-1}
+                await self.tools["synthesizer"].enable_receiver()
+                logger.info("ENABLE RECIVER****")
+
 
 
             if self.last_transmitted_timestamp == 0:
