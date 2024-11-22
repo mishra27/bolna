@@ -47,7 +47,6 @@ class TaskManager(BaseManager):
         self.average_synthesizer_latency = 0.0
         self.average_transcriber_latency = 0.0
         self.task_config = task
-        self.reject_id = -1000
 
         self.timezone = pytz.timezone('America/Los_Angeles')
         self.language = DEFAULT_LANGUAGE_CODE
@@ -791,8 +790,7 @@ class TaskManager(BaseManager):
         self.curr_sequence_id +=1
         meta_info_copy["sequence_id"] = self.curr_sequence_id
         meta_info_copy['turn_id'] = self.turn_id
-        if not meta_info_copy["sequence_id"] == self.reject_id:
-            self.sequence_ids.add(meta_info_copy["sequence_id"])
+        self.sequence_ids.add(meta_info_copy["sequence_id"])
         return meta_info_copy
     
     def _extract_sequence_and_meta(self, message):
@@ -1381,11 +1379,10 @@ class TaskManager(BaseManager):
                                     #Process interruption only if number of words is higher than the threshold 
                                     logger.info(f"###### Number of words {num_words} is higher than the required number of words for interruption, hence, definitely interrupting. Interruption and hence changing the turn id")
                                     self.turn_id += 1
-                                    self.last_sequence_id = self.curr_sequence_id
-                                    self.sequence_ids = {-1}
-                                    self.reject_id = list(self.sequence_ids)[-1]
-                                    logger.info(f"self.last_sequence_id:: {self.last_sequence_id}  message['meta_info'] {message['meta_info']} self.curr_sequence_id::: {self.curr_sequence_id}")
-                                    await self.tools["synthesizer"].clear_queue()
+                                    # self.last_sequence_id = self.curr_sequence_id
+                                    # self.sequence_ids = {-1}
+                                    # logger.info(f"self.last_sequence_id:: {self.last_sequence_id}  message['meta_info'] {message['meta_info']} self.curr_sequence_id::: {self.curr_sequence_id}")
+                                    # await self.tools["synthesizer"].clear_queue()
                                     await self.__cleanup_downstream_tasks()
                                     self.akshay_stop = True
                                 else:
@@ -1620,9 +1617,8 @@ class TaskManager(BaseManager):
                         await self.__send_preprocessed_audio(meta_info, get_md5_hash(text))
                     else:
                         self.synthesizer_characters += len(text)
-                        logger.info(f"$$$$ message['meta_info']['sequence_id'] {message['meta_info']['sequence_id']}  self.sequence_ids { self.sequence_ids}")
-                        # if message['meta_info']['sequence_id'] in self.sequence_ids:
                         if self.akshay_stop:
+                            await self.tools["synthesizer"].clear_queue()
                             await self.tools["synthesizer"].push(message)
                 else:
                     logger.info("other synthesizer models not supported yet")

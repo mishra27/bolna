@@ -92,8 +92,6 @@ class CartesiaSynthesizer(BaseSynthesizer):
                     logger.info("WebSocket is not connected, skipping receive.")
                     await asyncio.sleep(5)
                     continue
-                if self.interrupt_akshay:
-                    yield b'\x00'
 
                 response = await self.websocket_holder["websocket"].recv()
                 data = json.loads(response)
@@ -155,7 +153,7 @@ class CartesiaSynthesizer(BaseSynthesizer):
     # Currently we are only supporting wav output but soon we will incorporate conver
     async def generate(self):
         try:
-            if self.stream and not self.interrupt_akshay:
+            if self.stream:
                 async for message in self.receiver():
                     logger.info(f"Received message from server")
 
@@ -209,11 +207,8 @@ class CartesiaSynthesizer(BaseSynthesizer):
 
     async def push(self, message):
         logger.info(f"Pushed message to internal queue {message}")
-        if self.interrupt_akshay:
-            logger.info("interrupt_akshay is true stop talking")
 
-
-        if self.stream and not self.interrupt_akshay:
+        if self.stream:
             meta_info, text = message.get("meta_info"), message.get("data")
             self.synthesized_characters += len(text) if text is not None else 0
             end_of_llm_stream = "end_of_llm_stream" in meta_info and meta_info["end_of_llm_stream"]
