@@ -285,4 +285,4 @@ class CartesiaSynthesizer(BaseSynthesizer):
 
     async def reset(self):
         logger.info("Cartesia Synthesizer enabled.")
-        self.stop_false = False
+        self.stop_synth = False
