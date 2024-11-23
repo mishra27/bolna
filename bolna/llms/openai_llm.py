@@ -11,7 +11,8 @@ from bolna.helpers.logger_config import configure_logger
 
 logger = configure_logger(__name__)
 load_dotenv()
-    
+
+# TODO ADD finish_reason https://platform.openai.com/docs/api-reference/chat/streaming#chat/streaming-finish_reason
 
 class OpenAiLLM(BaseLLM):
     def __init__(self, max_tokens=100, buffer_size=40, model="gpt-3.5-turbo-16k", temperature=0.1, language=DEFAULT_LANGUAGE_CODE, **kwargs):
@@ -116,13 +117,17 @@ class OpenAiLLM(BaseLLM):
                 textual_response = True
                 answer += text_chunk    
                 buffer += text_chunk
+                llm_end = False
                 if len(buffer) >= self.buffer_size and synthesize:
                     buffer_words = buffer.split(" ")
                     text = ' '.join(buffer_words[:-1])
 
                     if not self.started_streaming:
                         self.started_streaming = True
-                    yield text, False, latency, False
+                    if chunk.choices[0].finish_reason == "stop":
+                        llm_end = True
+
+                    yield text, llm_end, latency, False
                     buffer = buffer_words[-1]
 
         if self.trigger_function_call and called_fun in self.api_params:

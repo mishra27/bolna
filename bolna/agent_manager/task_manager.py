@@ -1209,8 +1209,6 @@ class TaskManager(BaseManager):
             messages.append({'role': 'user', 'content': message['data']})
             ### TODO CHECK IF THIS IS EVEN REQUIRED
             convert_to_request_log(message=format_messages(messages, use_system_prompt=True), meta_info=meta_info, component="llm", direction="request", model=self.llm_config["model"], run_id= self.run_id)
-            self.stream_to_twilio = True
-            await self.tools["synthesizer"].reset()
             await self.__do_llm_generation(messages, meta_info, next_step, should_bypass_synth)
             # TODO : Write a better check for completion prompt
             if self.use_llm_to_determine_hangup and not self.turn_based_conversation:
@@ -1630,9 +1628,15 @@ class TaskManager(BaseManager):
                         logger.info(f"Cached response and hence sending preprocessed text")
                         convert_to_request_log(message = text, meta_info= meta_info, component="synthesizer", direction="response", model = self.synthesizer_provider, is_cached= True, engine=self.tools['synthesizer'].get_engine(), run_id= self.run_id)
                         await self.__send_preprocessed_audio(meta_info, get_md5_hash(text))
-                    else:
+                    elif self.stream_to_twilio:
                         self.synthesizer_characters += len(text)
                         await self.tools["synthesizer"].push(message)
+                    else:
+                        # TODO switch with end of stream message check!!
+                        if meta_info["end_of_llm_stream"] == True:
+                            logger.info("RESETTING ALL")
+                            self.stream_to_twilio = True
+                            await self.tools["synthesizer"].reset()
                 else:
                     logger.info("other synthesizer models not supported yet")
             else:

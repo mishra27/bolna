@@ -48,5 +48,4 @@ class StreamingContextualAgent(BaseAgent):
             # result = [(word, *token[1:]) for word in words]
             # for item in result:
             #     yield item
-    
             yield token
